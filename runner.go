@@ -378,6 +378,19 @@ func (r *Runner) appendPrefixes(
 			continue
 		}
 
+		if !config.BoolVal(cp.NoPrefix) {
+			pc, ok := r.configPrefixMap[d.String()]
+			if !ok {
+				return fmt.Errorf("missing dependency %s", d)
+			}
+
+			// Replace the invalid path chars such as slashes with underscores
+			path := InvalidRegexp.ReplaceAllString(config.StringVal(pc.Path), "_")
+
+			// Prefix the key value with the path value.
+			key = fmt.Sprintf("%s_%s", path, key)
+		}
+
 		// If the user specified a custom format, apply that here.
 		if config.StringPresent(cp.Format) {
 			key, err = applyTemplate(config.StringVal(cp.Format), key)
@@ -404,6 +417,17 @@ func (r *Runner) appendPrefixes(
 	}
 
 	return nil
+}
+
+func isVaultKv2(data map[string]interface{}) bool {
+	// check for presence of "metadata.version", indicating this value came from Vault
+	// kv version 2
+	if data["metadata"] != nil {
+		metadata := data["metadata"].(map[string]interface{})
+		return metadata["version"] != nil
+	}
+
+	return false
 }
 
 func (r *Runner) appendSecrets(
@@ -433,10 +457,10 @@ func (r *Runner) appendSecrets(
 		// map[string]interface, we assume it's KV2 and use the key/value pair from
 		// it, otherwise we assume it's KV1
 		//
-		// value here in KV1 format is a simple string.
-		// value in KV2 format is a map:
-		// map[string]interface {}{
-		//   "key": "value",
+		// In KV1, the JSON looks like
+		// {
+		//		"secretKey1": "value1",
+		//		"secretKey2", "value2"
 		// }
 		if key == "data" {
 			switch value.(type) {
@@ -452,7 +476,9 @@ func (r *Runner) appendSecrets(
 				// above block
 			}
 		}
+	}
 
+	for key, value := range valueMap {
 		// Ignore any keys that are empty (not sure if this is even possible in
 		// Vault, but I play defense).
 		if strings.TrimSpace(key) == "" {
